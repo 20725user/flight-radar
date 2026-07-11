@@ -1,6 +1,7 @@
 import requests  # HTTP 통신을 위해 requests 라이브러리를 불러와. (API에 데이터를 요청하기 위함)
 import pandas as pd  # 수신한 리스트 데이터를 2차원 표 형태인 데이터프레임 구조로 변환하기 위해 pandas를 불러와.
 import streamlit as st  # 웹 화면에 지도와 데이터를 시각화하기 위해 streamlit 라이브러리를 불러와.
+import numpy
 
 # ==========================================
 # 1. OpenSky API 데이터 호출 함수 정의
