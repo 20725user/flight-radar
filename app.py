@@ -1,7 +1,7 @@
 import requests
 import pandas as pd
 import streamlit as st
-import pydeck as pdk  # 💡 강력한 대화형 지도(인터랙티브 맵)를 그리기 위해 새로 추가했어!
+import pydeck as pdk 
 
 # ==========================================
 # 1. OpenSky API 데이터 호출 함수 정의
@@ -56,11 +56,19 @@ def get_korea_flights(client_id, client_secret):
 # 2. Streamlit 웹 화면 구성 및 실행 파트
 # ==========================================
 
-st.set_page_config(layout="wide") # 지도를 넓게 보기 위해 전체 화면 모드로 설정!
+st.set_page_config(layout="wide") 
 st.title("✈️ 실시간 한반도 비행기 레이더")
 
 CLIENT_ID = "20725user-api-client"
 CLIENT_SECRET = "GsWs26aDoIMRoAtHmpbX0BDgJrkft5fy"
+
+# 💡 자주 보이는 국가들의 국기 매핑 딕셔너리
+flag_dict = {
+    "South Korea": "🇰🇷", "United States": "🇺🇸", "China": "🇨🇳", "Japan": "🇯🇵",
+    "Taiwan": "🇹🇼", "Russia": "🇷🇺", "Philippines": "🇵🇭", "Vietnam": "🇻🇳",
+    "Thailand": "🇹🇭", "Malaysia": "🇲🇾", "Singapore": "🇸🇬", "United Kingdom": "🇬🇧",
+    "Germany": "🇩🇪", "France": "🇫🇷", "Netherlands": "🇳🇱", "Qatar": "🇶🇦", "United Arab Emirates": "🇦🇪"
+}
 
 with st.spinner("한반도 상공의 비행기 데이터를 실시간으로 불러오는 중이야..."):
     df = get_korea_flights(CLIENT_ID, CLIENT_SECRET)
@@ -70,23 +78,18 @@ if df is None:
 elif df.empty:
     st.warning("현재 지정된 범위(한반도) 상공에 조회된 비행기가 없어. 잠시 후 다시 시도해 봐.")
 else:
-    # ---------------------------------------------------------
-    # [기능 1] 국적별 비행기 필터링 (국기 이모지 유지)
-    # ---------------------------------------------------------
+    # 💡 데이터프레임에 아예 '국기(flag)'와 '국기+이름' 컬럼을 새로 만들어버려!
+    df['flag'] = df['origin_country'].apply(lambda x: flag_dict.get(x, "🏳️"))
+    df['country_with_flag'] = df['flag'] + " " + df['origin_country']
+
     st.subheader("🌍 국적별 필터링")
     
-    flag_dict = {
-        "South Korea": "🇰🇷", "United States": "🇺🇸", "China": "🇨🇳", "Japan": "🇯🇵",
-        "Taiwan": "🇹🇼", "Russia": "🇷🇺", "Philippines": "🇵🇭", "Vietnam": "🇻🇳",
-        "Thailand": "🇹🇭", "Malaysia": "🇲🇾", "Singapore": "🇸🇬", "United Kingdom": "🇬🇧",
-        "Germany": "🇩🇪", "France": "🇫🇷", "Netherlands": "🇳🇱", "Qatar": "🇶🇦", "United Arab Emirates": "🇦🇪"
-    }
-
+    country_list = ["전체보기"] + sorted(list(df['origin_country'].dropna().unique()))
+    
     def format_country_with_flag(country_name):
         if country_name == "전체보기": return "🌐 전체보기"
         return f"{flag_dict.get(country_name, '🏳️')} {country_name}"
     
-    country_list = ["전체보기"] + sorted(list(df['origin_country'].dropna().unique()))
     selected_country = st.selectbox("조회하고 싶은 국적을 선택해 봐:", country_list, format_func=format_country_with_flag)
     
     if selected_country != "전체보기":
@@ -96,41 +99,49 @@ else:
         
     st.success(f"선택한 조건에 맞는 비행기가 총 {len(filtered_df)}대 포착되었어!")
     
-    # 지도 오류 방지를 위해 위치 데이터가 없는 행은 제거
     map_df = filtered_df.dropna(subset=['latitude', 'longitude']).copy()
 
     # ---------------------------------------------------------
-    # 💡 [기능 3 개선] Pydeck을 활용한 인터랙티브 툴팁 지도!
+    # [지도 시각화] 국기 이모지를 지도 위에 직접 그리기!
     # ---------------------------------------------------------
     if not map_df.empty:
-        # 데이터프레임의 빈 값(NaN)을 보기 좋게 처리
         map_df['callsign'] = map_df['callsign'].fillna("알 수 없음")
         map_df['baro_altitude'] = map_df['baro_altitude'].fillna(0)
         map_df['velocity'] = map_df['velocity'].fillna(0)
         
-        # 1. 지도 초기 화면 설정 (한반도 중심)
         view_state = pdk.ViewState(
             latitude=36.5,
             longitude=127.5,
-            zoom=6,
-            pitch=40, # 지도를 40도 정도 눕혀서 입체감 있게 보이게 해줘
+            zoom=6.5,
+            pitch=45, 
         )
 
-        # 2. 비행기를 나타낼 레이어(점) 설정
+        # 1. 비행기 위치를 나타내는 빨간 점(Scatterplot)
         scatter_layer = pdk.Layer(
             "ScatterplotLayer",
             data=map_df,
             get_position='[longitude, latitude]',
-            get_radius=8000, # 원의 크기
-            get_fill_color='[255, 75, 75, 200]', # 원의 색상 (빨간색 계열)
-            pickable=True, # 💡 이걸 True로 해야 마우스를 올렸을 때 인식해!
+            get_radius=5000, 
+            get_fill_color='[255, 75, 75, 200]', 
+            pickable=True, 
         )
 
-        # 3. 툴팁(말풍선)에 들어갈 디자인과 데이터 포맷 설정
+        # 2. 💡 비행기 점 바로 옆에 국기를 텍스트로 그려주는 레이어 추가!
+        text_layer = pdk.Layer(
+            "TextLayer",
+            data=map_df,
+            get_position='[longitude, latitude]',
+            get_text='flag', # 새로 만든 flag 컬럼의 이모지를 가져옴
+            get_size=25, # 국기 이모지 크기
+            get_alignment_baseline="'bottom'", # 점 위쪽에 띄우기 위해 정렬
+            pickable=False, # 툴팁 중복 방지
+        )
+
+        # 3. 툴팁에도 새로 만든 'country_with_flag' 열을 사용해서 국기가 나오게 수정
         tooltip = {
             "html": """
             <b>호출부호(Callsign):</b> {callsign} <br/>
-            <b>국적:</b> {origin_country} <br/>
+            <b>국적:</b> {country_with_flag} <br/>
             <b>고도:</b> {baro_altitude} m <br/>
             <b>속도:</b> {velocity} m/s
             """,
@@ -142,12 +153,12 @@ else:
             }
         }
 
-        # 4. 최종 지도 렌더링
+        # 4. 점(scatter_layer)과 국기(text_layer)를 둘 다 layers 리스트에 넣어서 렌더링
         r = pdk.Deck(
-            layers=[scatter_layer],
+            layers=[scatter_layer, text_layer],
             initial_view_state=view_state,
             tooltip=tooltip,
-            map_style='mapbox://styles/mapbox/dark-v10' # 멋진 다크 모드 지도
+            map_style='mapbox://styles/mapbox/dark-v10' 
         )
         
         st.pydeck_chart(r)
