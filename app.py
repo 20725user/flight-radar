@@ -1,6 +1,6 @@
-import requests  # HTTP 통신을 위해 requests 라이브러리를 불러와. (API에 데이터를 요청하기 위함)
-import pandas as pd  # 수신한 리스트 데이터를 2차원 표 형태인 데이터프레임 구조로 변환하기 위해 pandas를 불러와.
-import streamlit as st  # 웹 화면에 지도와 데이터를 시각화하기 위해 streamlit 라이브러리를 불러와.
+import requests
+import pandas as pd
+import streamlit as st
 
 # ==========================================
 # 1. OpenSky API 데이터 호출 함수 정의
@@ -10,7 +10,6 @@ def get_korea_flights(client_id, client_secret):
     # --- [OAuth2 인증 토큰 발급] ---
     token_url = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
     
-    # 💡 [핵심 수정 완료] 키(Key) 이름은 반드시 "client_id"와 "client_secret"이어야 해!
     token_data = {
         "grant_type": "client_credentials",
         "client_id": client_id,        
@@ -18,24 +17,17 @@ def get_korea_flights(client_id, client_secret):
     }
     
     try:  
-        # 토큰 URL로 POST 요청을 보내고, 응답 지연을 대비해 timeout을 30초로 제한해.
         token_response = requests.post(token_url, data=token_data, timeout=30)
         token_response.raise_for_status()  
-        
-        # 응답받은 JSON 데이터에서 실제 사용할 'access_token' 값만 추출해.
         access_token = token_response.json().get("access_token")
-        
     except requests.exceptions.RequestException as e:  
         print(f"토큰 발급 실패: {e}")
         return None
 
     # --- [비행기 데이터 실시간 조회] ---
     api_url = "https://opensky-network.org/api/states/all"
-    
-    # 위에서 발급받은 토큰을 헤더에 넣어서 인증해.
     headers = {"Authorization": f"Bearer {access_token}"}
     
-    # 한반도 상공의 위도와 경도 범위
     params = {
         "lamin": 33.0, 
         "lamax": 39.0, 
@@ -44,11 +36,9 @@ def get_korea_flights(client_id, client_secret):
     }
     
     try:  
-        # 이번에는 토큰이 담긴 헤더(headers)를 같이 보내서 GET 요청을 해.
         response = requests.get(api_url, params=params, headers=headers, timeout=30)
         response.raise_for_status()
         data = response.json()
-        
     except requests.exceptions.RequestException as e:  
         print(f"데이터 응답 실패: {e}")
         return None
@@ -57,7 +47,6 @@ def get_korea_flights(client_id, client_secret):
     states = data.get("states")
     
     if not states:
-        print("현재 한반도 상공에 조회된 비행기 데이터가 없어.")
         return pd.DataFrame()
 
     columns = [
@@ -77,26 +66,82 @@ def get_korea_flights(client_id, client_secret):
 
 st.title("✈️ 실시간 한반도 비행기 레이더")
 
-# 네가 알려준 Client ID와 Secret 값을 그대로 변수에 담았어.
 CLIENT_ID = "20725user-api-client"
 CLIENT_SECRET = "GsWs26aDoIMRoAtHmpbX0BDgJrkft5fy"
 
 with st.spinner("한반도 상공의 비행기 데이터를 실시간으로 불러오는 중이야..."):
-    # 함수에 ID와 Secret을 전달해서 실행!
     df = get_korea_flights(CLIENT_ID, CLIENT_SECRET)
 
 if df is None:
-    st.error("데이터를 불러오는 데 실패했어. 터미널 창(검은 화면)의 에러 메시지를 확인해 봐!")
+    st.error("데이터를 불러오는 데 실패했어. 터미널 창의 에러 메시지를 확인해 봐!")
 
 elif df.empty:
     st.warning("현재 지정된 범위(한반도) 상공에 조회된 비행기가 없어. 잠시 후 다시 시도해 봐.")
 
 else:
-    st.success(f"현재 한반도 상공에 {len(df)}대의 비행기가 포착되었어!")
+    # ---------------------------------------------------------
+    # [기능 1] 국적별 비행기 필터링 추가
+    # ---------------------------------------------------------
+    st.subheader("🌍 1. 국적별 필터링")
     
-    # 지도 오류 방지를 위해 위경도 값이 있는 데이터만 필터링
-    map_df = df.dropna(subset=['latitude', 'longitude'])
+    # 데이터에 존재하는 국가들의 중복 없는 리스트를 만들고, 맨 앞에 '전체보기'를 추가해.
+    country_list = ["전체보기"] + sorted(list(df['origin_country'].dropna().unique()))
+    
+    # 사용자가 국가를 선택할 수 있는 드롭다운 메뉴를 만들어.
+    selected_country = st.selectbox("조회하고 싶은 국적을 선택해 봐:", country_list)
+    
+    # '전체보기'가 아니면, 선택한 국가의 비행기만 남기도록 데이터프레임을 필터링해.
+    if selected_country != "전체보기":
+        filtered_df = df[df['origin_country'] == selected_country]
+    else:
+        filtered_df = df
+        
+    st.success(f"선택한 조건에 맞는 비행기가 총 {len(filtered_df)}대 포착되었어!")
+    
+    # 필터링된 데이터로 지도를 그려줘.
+    map_df = filtered_df.dropna(subset=['latitude', 'longitude'])
     st.map(map_df)
     
+    st.markdown("---") # 화면 분리선
+    
+    # ---------------------------------------------------------
+    # [기능 3] 특정 비행기 1대 타겟팅 대시보드 추가
+    # ---------------------------------------------------------
+    st.subheader("🎯 2. 특정 비행기 타겟팅 대시보드")
+    
+    # 필터링된 비행기들 중에서 콜사인(호출부호)이 비어있지 않은 정상적인 것만 리스트로 뽑아.
+    valid_callsigns = [c.strip() for c in filtered_df['callsign'].dropna().unique() if c.strip() != ""]
+    
+    if not valid_callsigns:
+        st.info("현재 선택한 조건에서는 호출부호(Callsign)가 확인되는 비행기가 없어.")
+    else:
+        # 비행기를 선택할 수 있는 메뉴를 만들어.
+        selected_callsign = st.selectbox("상세 정보를 볼 비행기(Callsign)를 선택해 봐:", valid_callsigns)
+        
+        # 선택한 콜사인과 일치하는 데이터 딱 한 줄(row)만 추출해.
+        target_flight = filtered_df[filtered_df['callsign'].str.strip() == selected_callsign].iloc[0]
+        
+        # 3개의 열(column)로 나누어서 멋진 계기판을 만들어.
+        col1, col2, col3 = st.columns(3)
+        
+        # API의 velocity는 m/s 단위, baro_altitude는 미터(m) 단위, true_track은 각도(°)야.
+        with col1:
+            # 고도를 미터(m) 단위로 표시해. 값이 없으면 '데이터 없음' 처리.
+            alt = f"{target_flight['baro_altitude']} m" if pd.notna(target_flight['baro_altitude']) else "데이터 없음"
+            st.metric(label="현재 고도", value=alt)
+            
+        with col2:
+            # 속도를 m/s 단위로 표시해.
+            vel = f"{target_flight['velocity']} m/s" if pd.notna(target_flight['velocity']) else "데이터 없음"
+            st.metric(label="현재 속도", value=vel)
+            
+        with col3:
+            # 비행 방향을 각도로 표시해 (0은 북쪽, 90은 동쪽).
+            track = f"{target_flight['true_track']}°" if pd.notna(target_flight['true_track']) else "데이터 없음"
+            st.metric(label="비행 방향(방위각)", value=track)
+
+    st.markdown("---")
+    
     with st.expander("📊 수신된 원본 비행기 세부 데이터 표 보기"):
-        st.dataframe(df)
+        # 표 데이터도 전체가 아닌 필터링된 데이터(filtered_df)를 보여주도록 수정했어.
+        st.dataframe(filtered_df)
